@@ -1,0 +1,11 @@
+{
+  "recommendations": [
+    "redhat.java",
+    "redhat.vscode-quarkus",
+    "redhat.vscode-kubernetes-tools",
+    "redhat.vscode-openshift-tools",
+    "lombok.vscode-java-lombok",
+    "redhat.vscode-yaml",
+    "redhat.vscode-xml"
+  ]
+}

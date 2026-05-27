@@ -1,0 +1,3 @@
+# Global ~/.gitignore_global ignores .vscode; track it for Dev Spaces / hands-on.
+!.vscode/
+!.vscode/**
