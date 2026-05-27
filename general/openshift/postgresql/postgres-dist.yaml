@@ -1,0 +1,169 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-dist-credentials
+type: Opaque
+stringData:
+  POSTGRESQL_USER: example_user
+  POSTGRESQL_PASSWORD: p4ssw0rd
+  POSTGRESQL_DATABASE: example_db
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-dist-init
+data:
+  01-grants.sh: |
+    #!/bin/bash
+    set -euo pipefail
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRESQL_USER" --dbname "example_db" <<-EOSQL
+      CREATE SCHEMA IF NOT EXISTS example_schema AUTHORIZATION example_user;
+      CREATE TABLE IF NOT EXISTS example_schema.CUSTOMER (
+        CUSTOMER_ID VARCHAR(256) NOT NULL,
+        FIRST_NAME VARCHAR(256),
+        LAST_NAME VARCHAR(256),
+        PRIMARY KEY (CUSTOMER_ID)
+      );
+      ALTER TABLE example_schema.customer OWNER TO example_user;
+      GRANT USAGE, CREATE ON SCHEMA example_schema TO example_user;
+      GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA example_schema TO example_user;
+      ALTER DEFAULT PRIVILEGES IN SCHEMA example_schema GRANT ALL ON TABLES TO example_user;
+    EOSQL
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-dist-start
+data:
+  00-ensure-user.sh: |
+    #!/bin/bash
+    set -euo pipefail
+    if ! psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${POSTGRESQL_USER}'" | grep -q 1; then
+      createuser "$POSTGRESQL_USER"
+    fi
+    if ! psql -tAc "SELECT 1 FROM pg_database WHERE datname='${POSTGRESQL_DATABASE}'" | grep -q 1; then
+      createdb --owner="$POSTGRESQL_USER" "$POSTGRESQL_DATABASE"
+    fi
+    psql -v ON_ERROR_STOP=1 --dbname "$POSTGRESQL_DATABASE" <<-EOSQL
+      CREATE SCHEMA IF NOT EXISTS example_schema;
+      ALTER SCHEMA example_schema OWNER TO example_user;
+      CREATE TABLE IF NOT EXISTS example_schema.CUSTOMER (
+        CUSTOMER_ID VARCHAR(256) NOT NULL,
+        FIRST_NAME VARCHAR(256),
+        LAST_NAME VARCHAR(256),
+        PRIMARY KEY (CUSTOMER_ID)
+      );
+      ALTER TABLE example_schema.customer OWNER TO example_user;
+      GRANT USAGE, CREATE ON SCHEMA example_schema TO example_user;
+      GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA example_schema TO example_user;
+      ALTER DEFAULT PRIVILEGES IN SCHEMA example_schema GRANT ALL ON TABLES TO example_user;
+    EOSQL
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-dist-pg16-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-dist
+  labels:
+    app: postgres-dist
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-dist
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: postgres-dist
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgresql
+          image: registry.redhat.io/rhel9/postgresql-16:latest
+          ports:
+            - containerPort: 5432
+              name: postgresql
+          envFrom:
+            - secretRef:
+                name: postgres-dist-credentials
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/pgsql/data
+            - name: init
+              mountPath: /opt/app-root/src/postgresql-init
+            - name: start
+              mountPath: /opt/app-root/src/postgresql-start
+          readinessProbe:
+            exec:
+              command:
+                - /usr/bin/pg_isready
+                - -U
+                - example_user
+                - -d
+                - example_db
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - /usr/bin/pg_isready
+                - -U
+                - example_user
+                - -d
+                - example_db
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: postgres-dist-pg16-data
+        - name: init
+          configMap:
+            name: postgres-dist-init
+            defaultMode: 0755
+        - name: start
+          configMap:
+            name: postgres-dist-start
+            defaultMode: 0755
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-dist
+  labels:
+    app: postgres-dist
+spec:
+  selector:
+    app: postgres-dist
+  ports:
+    - name: postgresql
+      port: 5432
+      targetPort: postgresql

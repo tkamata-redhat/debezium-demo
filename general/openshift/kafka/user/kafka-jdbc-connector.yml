@@ -1,0 +1,21 @@
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaConnector
+metadata:
+  name: kafka-jdbc-connector
+  labels:
+    strimzi.io/cluster: debezium-kafka-connect-cluster
+spec:
+  name: postgres-sink-connector
+  class: io.debezium.connector.jdbc.JdbcSinkConnector
+  tasksMax: 1
+  config:
+    connection.url: jdbc:postgresql://postgres-dist:5432/example_db
+    connection.username: example_user
+    connection.password: p4ssw0rd
+    insert.mode: upsert
+    delete.enabled: true
+    primary.key.mode: record_key
+    schema.evolution: basic
+    database.time_zone: UTC
+    topics.regex: dbz\.example_schema\..*
+    table.name.format: ${source.schema}.${source.table}

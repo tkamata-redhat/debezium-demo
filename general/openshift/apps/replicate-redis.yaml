@@ -1,0 +1,66 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: replicate-redis-config
+  labels:
+    app: replicate-redis
+data:
+  application.properties: |
+    quarkus.redis.hosts=redis://redis:6379
+    quarkus.kafka.devservices.enabled=false
+    mp.messaging.incoming.customer-events.connector=smallrye-kafka
+    mp.messaging.incoming.customer-events.topic=dbz.example_schema.customer
+    mp.messaging.incoming.customer-events.group.id=replicate-redis
+    mp.messaging.incoming.customer-events.bootstrap.servers=my-cluster-kafka-bootstrap:9092
+    mp.messaging.incoming.customer-events.auto.offset.reset=earliest
+    mp.messaging.incoming.customer-events.key.deserializer=org.apache.kafka.common.serialization.StringDeserializer
+    mp.messaging.incoming.customer-events.value.deserializer=org.apache.kafka.common.serialization.StringDeserializer
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: replicate-redis
+  labels:
+    app: replicate-redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: replicate-redis
+  template:
+    metadata:
+      labels:
+        app: replicate-redis
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: replicate-redis
+          image: image-registry.openshift-image-registry.svc:5000/kafka-demo/replicate-redis:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: QUARKUS_CONFIG_LOCATIONS
+              value: /deployments/config/application.properties
+          volumeMounts:
+            - name: config
+              mountPath: /deployments/config
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+      volumes:
+        - name: config
+          configMap:
+            name: replicate-redis-config

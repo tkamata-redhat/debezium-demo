@@ -1,0 +1,186 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-src-credentials
+type: Opaque
+stringData:
+  POSTGRESQL_USER: debezium
+  POSTGRESQL_PASSWORD: debezium
+  POSTGRESQL_DATABASE: example_db
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-src-cfg
+data:
+  cdc.conf: |
+    wal_level = logical
+    max_wal_senders = 4
+    max_replication_slots = 4
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-src-init
+data:
+  01-debezium.sh: |
+    #!/bin/bash
+    set -euo pipefail
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRESQL_USER" --dbname "example_db" <<-EOSQL
+      ALTER USER debezium WITH REPLICATION;
+      CREATE SCHEMA IF NOT EXISTS example_schema;
+      ALTER SCHEMA example_schema OWNER TO debezium;
+      CREATE TABLE IF NOT EXISTS example_schema.CUSTOMER (
+        CUSTOMER_ID VARCHAR(256) NOT NULL,
+        FIRST_NAME VARCHAR(256),
+        LAST_NAME VARCHAR(256),
+        PRIMARY KEY (CUSTOMER_ID)
+      );
+      ALTER TABLE example_schema.customer OWNER TO debezium;
+      GRANT USAGE, CREATE ON SCHEMA example_schema TO debezium;
+      GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA example_schema TO debezium;
+      ALTER DEFAULT PRIVILEGES IN SCHEMA example_schema GRANT ALL ON TABLES TO debezium;
+    EOSQL
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-src-start
+data:
+  00-ensure-user.sh: |
+    #!/bin/bash
+    set -euo pipefail
+    if ! psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${POSTGRESQL_USER}'" | grep -q 1; then
+      createuser "$POSTGRESQL_USER"
+    fi
+    if ! psql -tAc "SELECT 1 FROM pg_database WHERE datname='${POSTGRESQL_DATABASE}'" | grep -q 1; then
+      createdb --owner="$POSTGRESQL_USER" "$POSTGRESQL_DATABASE"
+    fi
+    psql -v ON_ERROR_STOP=1 --dbname "$POSTGRESQL_DATABASE" <<-EOSQL
+      ALTER USER debezium WITH REPLICATION;
+      CREATE SCHEMA IF NOT EXISTS example_schema;
+      ALTER SCHEMA example_schema OWNER TO debezium;
+      CREATE TABLE IF NOT EXISTS example_schema.CUSTOMER (
+        CUSTOMER_ID VARCHAR(256) NOT NULL,
+        FIRST_NAME VARCHAR(256),
+        LAST_NAME VARCHAR(256),
+        PRIMARY KEY (CUSTOMER_ID)
+      );
+      ALTER TABLE example_schema.customer OWNER TO debezium;
+      GRANT USAGE, CREATE ON SCHEMA example_schema TO debezium;
+      GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA example_schema TO debezium;
+    EOSQL
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-src-pg16-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-src
+  labels:
+    app: postgres-src
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-src
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: postgres-src
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgresql
+          image: registry.redhat.io/rhel9/postgresql-16:latest
+          ports:
+            - containerPort: 5432
+              name: postgresql
+          envFrom:
+            - secretRef:
+                name: postgres-src-credentials
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/pgsql/data
+            - name: cfg
+              mountPath: /opt/app-root/src/postgresql-cfg
+            - name: init
+              mountPath: /opt/app-root/src/postgresql-init
+            - name: start
+              mountPath: /opt/app-root/src/postgresql-start
+          readinessProbe:
+            exec:
+              command:
+                - /usr/bin/pg_isready
+                - -U
+                - debezium
+                - -d
+                - example_db
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - /usr/bin/pg_isready
+                - -U
+                - debezium
+                - -d
+                - example_db
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: postgres-src-pg16-data
+        - name: cfg
+          configMap:
+            name: postgres-src-cfg
+        - name: init
+          configMap:
+            name: postgres-src-init
+            defaultMode: 0755
+        - name: start
+          configMap:
+            name: postgres-src-start
+            defaultMode: 0755
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-src
+  labels:
+    app: postgres-src
+spec:
+  selector:
+    app: postgres-src
+  ports:
+    - name: postgresql
+      port: 5432
+      targetPort: postgresql

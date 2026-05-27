@@ -1,0 +1,22 @@
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaConnector
+metadata:
+  name: debezium-connector-postgres
+  labels:
+    strimzi.io/cluster: debezium-kafka-connect-cluster
+spec:
+  class: io.debezium.connector.postgresql.PostgresConnector
+  tasksMax: 1
+  config:
+    database.history.kafka.bootstrap.servers: my-cluster-kafka-bootstrap:9092
+    topic.prefix: dbz
+    database.hostname: postgres-src
+    database.port: 5432
+    database.user: debezium
+    database.password: debezium
+    database.dbname: example_db
+    plugin.name: pgoutput
+    schema.include.list: example_schema
+    table.include.list: example_schema.customer
+    publication.autocreate.mode: filtered
+    capture.mode: change_streams_update_full_with_pre_image

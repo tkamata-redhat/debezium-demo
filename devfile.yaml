@@ -1,0 +1,31 @@
+schemaVersion: 2.2.0
+metadata:
+  name: kafka-handson
+  displayName: Kafka Hands-on Workspace
+  description: Tooling-only Red Hat Dev Spaces workspace for manual hands-on
+components:
+  - name: tools
+    container:
+      image: quay.io/devfile/universal-developer-image:ubi9-latest
+      memoryLimit: 4Gi
+      mountSources: true
+      command: ["/bin/sh", "-c"]
+      args: ["tail -f /dev/null"]
+commands:
+  - id: check-tools
+    exec:
+      label: Check required CLIs
+      component: tools
+      workingDir: /projects
+      commandLine: java -version && mvn -version && git --version && (oc version --client || true)
+      group:
+        kind: build
+        isDefault: true
+  - id: clone-hint
+    exec:
+      label: Show clone instructions
+      component: tools
+      workingDir: /projects
+      commandLine: echo "Clone apps manually:" && echo "git clone <data-generator-repo-url> data-generator" && echo "git clone <replicate-redis-repo-url> replicate-redis"
+      group:
+        kind: run

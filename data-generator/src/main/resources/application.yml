@@ -1,0 +1,17 @@
+quarkus:
+  smallrye-openapi:
+    info-title: Data Generator API
+    info-version: 1.0.0
+    info-description: Customer CRUD API for Debezium CDC testing
+  swagger-ui:
+    always-include: true
+  datasource:
+    db-kind: postgresql
+    username: debezium
+    password: debezium
+    jdbc:
+      url: jdbc:postgresql://localhost:5432/example_db
+  hibernate-orm:
+    database:
+      generation: none
+    validate-in-dev-mode: false

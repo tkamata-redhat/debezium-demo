@@ -1,0 +1,128 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: data-generator-config
+  labels:
+    app: data-generator
+data:
+  application.properties: |
+    quarkus.http.host=0.0.0.0
+    quarkus.smallrye-openapi.info-title=Data Generator API
+    quarkus.smallrye-openapi.info-version=1.0.0
+    quarkus.smallrye-openapi.info-description=Customer CRUD API for Debezium CDC testing
+    quarkus.swagger-ui.always-include=true
+    quarkus.datasource.db-kind=postgresql
+    quarkus.datasource.username=debezium
+    quarkus.datasource.password=debezium
+    quarkus.datasource.jdbc.url=jdbc:postgresql://postgres-src:5432/example_db
+    quarkus.hibernate-orm.database.generation=none
+    quarkus.hibernate-orm.schema-management.strategy=none
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: data-generator
+  labels:
+    app: data-generator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: data-generator
+  template:
+    metadata:
+      labels:
+        app: data-generator
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: data-generator
+          image: image-registry.openshift-image-registry.svc:5000/kafka-demo/data-generator:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: QUARKUS_HTTP_HOST
+              value: "0.0.0.0"
+            - name: QUARKUS_DATASOURCE_JDBC_URL
+              value: jdbc:postgresql://postgres-src:5432/example_db
+            - name: QUARKUS_DATASOURCE_USERNAME
+              value: debezium
+            - name: QUARKUS_DATASOURCE_PASSWORD
+              value: debezium
+            - name: QUARKUS_HIBERNATE_ORM_DATABASE_GENERATION
+              value: none
+            - name: QUARKUS_HIBERNATE_ORM_SCHEMA_MANAGEMENT_STRATEGY
+              value: none
+            - name: QUARKUS_SWAGGER_UI_ALWAYS_INCLUDE
+              value: "true"
+          volumeMounts:
+            - name: config
+              mountPath: /deployments/config
+              readOnly: true
+          startupProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+      volumes:
+        - name: config
+          configMap:
+            name: data-generator-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: data-generator
+  labels:
+    app: data-generator
+spec:
+  selector:
+    app: data-generator
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: data-generator
+  labels:
+    app: data-generator
+spec:
+  to:
+    kind: Service
+    name: data-generator
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
